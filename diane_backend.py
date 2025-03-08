@@ -1,33 +1,27 @@
+import os
 from flask import Flask, request, jsonify
 import requests
 
-# Configuration
 app = Flask(__name__)
 
-MISTRAL_API_KEY = "BkO0BEjhCaVrMJt3ohVVQkALeVl3qxv4"
-MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
-
-HEADERS = {
-    "Authorization": f"Bearer {MISTRAL_API_KEY}",
-    "Content-Type": "application/json"
-}
-
-@app.route("/", methods=["GET"])
-def home():
-    return "Diane Chatbot API is running!"
+# Charger la clé API Mistral depuis les variables d'environnement
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 
 @app.route("/diane", methods=["POST"])
-def chat_with_diane():
+def diane_chatbot():
     try:
-        # Vérifie si la requête contient du JSON
         data = request.get_json()
-        if not data or "message" not in data:
-            return jsonify({"error": "Message manquant"}), 400
+        user_message = data.get("message", "")
 
-        user_message = data["message"]
-        print(f"📩 Message reçu : {user_message}")  # Affiche le message reçu par Flask
+        if not user_message:
+            return jsonify({"response": "Aucun message reçu."}), 400
 
-        # Création de la requête pour Mistral
+        # Requête à l'API Mistral
+        url = "https://api.mistral.ai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {MISTRAL_API_KEY}",
+            "Content-Type": "application/json"
+        }
         payload = {
             "model": "mistral-medium",
             "messages": [
@@ -36,25 +30,19 @@ def chat_with_diane():
             ]
         }
 
-        print(f"🚀 Envoi à Mistral : {payload}")  # Affiche la requête envoyée à Mistral
+        mistral_response = requests.post(url, headers=headers, json=payload)
 
-        # Envoie la requête à Mistral
-        response = requests.post(MISTRAL_API_URL, headers=HEADERS, json=payload)
-
-        if response.status_code != 200:
-            print(f"⚠️ Erreur API Mistral : {response.status_code} - {response.text}")
-            return jsonify({"error": "Problème avec l'API Mistral"}), 500
-
-        response_data = response.json()
-        bot_reply = response_data["choices"][0]["message"]["content"]
-
-        print(f"💬 Réponse de Mistral : {bot_reply}")  # Affiche la réponse de Mistral
-
-        return jsonify({"response": bot_reply})
+        if mistral_response.status_code == 200:
+            response_data = mistral_response.json()
+            bot_reply = response_data["choices"][0]["message"]["content"]
+            return jsonify({"response": bot_reply})
+        else:
+            return jsonify({"error": "Erreur avec l'API Mistral."}), 500
 
     except Exception as e:
-        print(f"🔥 Erreur serveur : {str(e)}")
-        return jsonify({"error": "Erreur interne du serveur"}), 500
+        return jsonify({"error": f"Erreur serveur : {str(e)}"}), 500
 
+# Correction pour Render : récupérer le port depuis les variables d'environnement
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    port = int(os.environ.get("PORT", 5000))  # Utilise le port assigné par Render
+    app.run(host="0.0.0.0", port=port)
