@@ -1,8 +1,10 @@
 import os
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import requests
 
 app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "https://luslan.fr"}})  # Autorise uniquement luslan.fr
 
 # Charger la clé API Mistral depuis les variables d'environnement
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
@@ -35,14 +37,14 @@ def diane_chatbot():
         if mistral_response.status_code == 200:
             response_data = mistral_response.json()
             bot_reply = response_data["choices"][0]["message"]["content"]
-            return jsonify({"response": bot_reply})
+            return jsonify({"response": bot_reply}, ensure_ascii=False)
         else:
             return jsonify({"error": "Erreur avec l'API Mistral."}), 500
 
     except Exception as e:
         return jsonify({"error": f"Erreur serveur : {str(e)}"}), 500
 
-# Correction pour Render : récupérer le port depuis les variables d'environnement
+# Configuration pour Render : récupérer le port depuis les variables d'environnement
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))  # Utilise le port assigné par Render
     app.run(host="0.0.0.0", port=port)
