@@ -36,8 +36,8 @@ def diane_chatbot():
 
         if mistral_response.status_code == 200:
             response_data = mistral_response.json()
-            bot_reply = response_data["choices"][0]["message"]["content"]
-            return jsonify({"response": bot_reply}, ensure_ascii=False)
+            bot_reply = response_data.get("choices", [{}])[0].get("message", {}).get("content", "Réponse introuvable")
+            return jsonify({"response": bot_reply})
         else:
             return jsonify({"error": "Erreur avec l'API Mistral."}), 500
 
