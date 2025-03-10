@@ -1,18 +1,31 @@
 import os
+import re
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "https://luslan.fr"}})  # Autorise uniquement luslan.fr
+CORS(app, resources={r"/*": {"origins": "https://luslan.fr"}})  # Autorise uniquement Luslan.fr
 
 # Charger la clé API Mistral depuis les variables d'environnement
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 
-def truncate_response(text, max_words=80):
-    """ Tronque la réponse à max_words mots. """
+def clean_response(text, word_limit=80):
+    """
+    Limite la réponse à un nombre maximal de mots sans couper une phrase.
+    """
     words = text.split()
-    return " ".join(words[:max_words]) + ("..." if len(words) > max_words else "")
+    if len(words) <= word_limit:
+        return text  # Pas besoin de tronquer
+
+    # Cherche un point de coupure intelligent (évite de couper une phrase)
+    truncated_text = " ".join(words[:word_limit])
+    match = re.search(r"([.!?])\s", truncated_text[::-1])
+    if match:
+        cut_index = len(truncated_text) - match.start()
+        return truncated_text[:cut_index].strip()
+
+    return truncated_text.strip() + "..."  # Ajoute "..." si coupure forcée
 
 @app.route("/diane", methods=["POST"])
 def diane_chatbot():
@@ -21,7 +34,7 @@ def diane_chatbot():
         user_message = data.get("message", "").strip()
 
         if not user_message:
-            return jsonify({"response": "Aucun message reçu."}), 400
+            return jsonify({"response": "Je n'ai pas compris votre question. Pouvez-vous préciser ?"}), 400
 
         # Requête à l'API Mistral
         url = "https://api.mistral.ai/v1/chat/completions"
@@ -32,7 +45,12 @@ def diane_chatbot():
         payload = {
             "model": "mistral-medium",
             "messages": [
-                {"role": "system", "content": "Tu es Diane, une herboriste experte en plantes médicinales."},
+                {"role": "system", "content": (
+                    "Tu es Diane, une herboriste experte en plantes médicinales. "
+                    "Tes réponses doivent être **courtes (≤ 80 mots)**, bien structurées et faciles à comprendre. "
+                    "Utilise un ton chaleureux, pédagogique et bienveillant. "
+                    "Si la question est trop large, donne une réponse concise et invite à poser des précisions."
+                )},
                 {"role": "user", "content": user_message}
             ]
         }
@@ -42,10 +60,10 @@ def diane_chatbot():
         if mistral_response.status_code == 200:
             response_data = mistral_response.json()
             bot_reply = response_data.get("choices", [{}])[0].get("message", {}).get("content", "Réponse introuvable")
-            bot_reply = truncate_response(bot_reply)  # Limitation à 80 mots
-            return jsonify({"response": bot_reply})
+
+            return jsonify({"response": clean_response(bot_reply)})
         else:
-            return jsonify({"error": f"Erreur avec l'API Mistral: {mistral_response.status_code}"}), 500
+            return jsonify({"error": "Erreur avec l'API Mistral."}), 500
 
     except Exception as e:
         return jsonify({"error": f"Erreur serveur : {str(e)}"}), 500
