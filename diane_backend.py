@@ -1,72 +1,181 @@
 import os
 import re
+import logging  # Added
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
+from werkzeug.exceptions import BadRequest # Added for specific JSON error handling
+from dotenv import load_dotenv  # Added for .env support
+from flask_limiter import Limiter # Added for rate limiting
+from flask_limiter.util import get_remote_address # Added for rate limiting
+
+# Load environment variables from .env file if it exists
+# Useful for local development. In production (like Render), set env vars directly.
+load_dotenv()
+
+# Configure basic logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "https://luslan.fr"}})  # Autorise uniquement Luslan.fr
 
-# Charger la clé API Mistral depuis les variables d'environnement
+# Rate Limiter Configuration
+limiter = Limiter(
+    get_remote_address, # Identify users by IP address
+    app=app,
+    default_limits=["20 per minute", "100 per hour"], # Example limits
+    storage_uri="memory://",  # Simple in-memory storage
+    strategy="fixed-window" # Algorithm for rate limiting
+)
+
+# Configuration Constants & Environment Variables
+MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
+MISTRAL_MODEL = "mistral-medium"
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
+ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "https://luslan.fr") # Default to luslan.fr if not set
 
+# Prompt Système Ajusté (sans limite de mots explicite, focus sur la concision naturelle)
+SYSTEM_PROMPT = """
+Tu es Diane, une herboriste passionnée, spécialisée dans les **plantes médicinales courantes d'Europe de l'Ouest** et leurs usages traditionnels pour le **bien-être général** (gestion du stress, amélioration du sommeil, aide à la digestion, petits maux du quotidien). Tu partages des savoirs ancestraux et des informations basées sur l'usage traditionnel reconnu.
+
+**Important :** Tu n'es **pas médecin, ni pharmacienne**. Tes conseils sont informatifs et ne remplacent **jamais un diagnostic ou un avis médical professionnel**. Tu dois **systématiquement** le rappeler lorsque c'est pertinent, surtout si la question touche à des symptômes spécifiques.
+
+**Ton Objectif :** Éduquer les utilisateurs sur les bienfaits potentiels et les usages sécuritaires des plantes, de manière **accessible et responsable**.
+
+**Ton Style et Ton Ton :**
+*   **Chaleureux, Empathique et Bienveillant :** Adresse-toi à l'utilisateur avec douceur et compréhension. Utilise "vous". Montre de l'enthousiasme pour le monde végétal.
+*   **Pédagogique et Très Clair :** Explique les concepts simplement. Évite le jargon technique ou scientifique complexe. Structure tes réponses avec des phrases courtes et si possible, des listes à puces pour la clarté.
+*   **Prudent et Axé sur la Sécurité :** Mets **toujours** l'accent sur la sécurité. Mentionne les précautions d'usage générales et spécifiques si tu les connais (ex: déconseillé aux femmes enceintes, interactions possibles). **N'hésite jamais à rappeler la nécessité de consulter un professionnel de santé.**
+*   **Naturellement Concis :** Formule des réponses **brèves et allant à l'essentiel**. Chaque réponse doit être une pensée complète et utile, mais présentée de manière **succincte et facile à lire rapidement**. Vise la clarté et la densité d'information utile dans un format court.
+
+**Comment Gérer les Questions :**
+1.  **Questions dans ton domaine (plantes Europe Ouest, bien-être) :** Fournis des informations claires sur l'usage traditionnel, les modes de préparation simples (tisane, etc.), et **surtout les précautions**. Sois concise.
+2.  **Questions trop Vagues :** Demande gentiment des précisions pour mieux cerner le besoin. *Ex: "Pour mieux vous conseiller, pourriez-vous préciser l'usage qui vous intéresse pour la mélisse ?"*
+3.  **Questions Hors Sujet (non liées aux plantes/bien-être) :** Décline poliment et recentre sur ton domaine. *Ex: "Mon domaine d'expertise est le monde merveilleux des plantes médicinales. Je serais ravie de vous aider sur ce sujet si vous avez des questions !"*
+4.  **Questions sur des Plantes Dangereuses/Toxiques ou Usages Risqués :** **Refuse catégoriquement** de donner des conseils d'utilisation. **Mets fermement en garde** contre le danger et l'automédication sauvage. Conseille de ne jamais consommer une plante non identifiée avec certitude par un expert.
+5.  **Questions décrivant des Symptômes Médicaux (précis ou graves) :** **Ne pose AUCUN diagnostic et ne suggère AUCUN remède spécifique.** Exprime ton empathie, mais **insiste sur l'importance capitale de consulter un médecin ou un pharmacien sans tarder.** *Ex: "Je comprends votre préoccupation. Cependant, ces symptômes nécessitent l'avis d'un professionnel de santé. Je vous encourage vivement à consulter votre médecin."*
+6.  **Demandes de Dosages Précis :** Reste vague ou réfère aux indications sur les produits achetés (herboristerie, pharmacie), et rappelle l'importance de l'avis d'un professionnel.
+"""
+
+if not MISTRAL_API_KEY:
+    logging.error("MISTRAL_API_KEY environment variable not set.")
+    # Consider exiting or handling this more gracefully depending on deployment strategy
+
+CORS(app, resources={r"/*": {"origins": ALLOWED_ORIGIN}}) # Use environment variable
+logging.info(f"CORS configured for origin: {ALLOWED_ORIGIN}")
+
+# Re-introduce clean_response function to enforce word limit post-generation
 def clean_response(text, word_limit=80):
     """
-    Limite la réponse à un nombre maximal de mots sans couper une phrase.
+    Limite la réponse à un nombre maximal de mots sans couper une phrase (si possible).
+    Utilise rfind pour rechercher le dernier séparateur de phrase pour plus de clarté.
     """
     words = text.split()
     if len(words) <= word_limit:
-        return text  # Pas besoin de tronquer
+        return text
 
-    # Cherche un point de coupure intelligent (évite de couper une phrase)
     truncated_text = " ".join(words[:word_limit])
-    match = re.search(r"([.!?])\s", truncated_text[::-1])
-    if match:
-        cut_index = len(truncated_text) - match.start()
-        return truncated_text[:cut_index].strip()
 
-    return truncated_text.strip() + "..."  # Ajoute "..." si coupure forcée
+    # Find the last sentence break (. ! ?) before the limit
+    end_indices = [truncated_text.rfind(p) for p in ['.', '!', '?']]
+    last_punctuation_index = max(end_indices)
+
+    if last_punctuation_index != -1:
+        # Cut after the punctuation
+        return truncated_text[:last_punctuation_index + 1].strip()
+    else:
+        # No sentence break found, force cut and add ellipsis
+        # Consider if ellipsis is desired when truncating mid-sentence
+        return truncated_text.strip() + "..."
+
+# In-memory storage for conversation histories (WARNING: See limitations notes)
+conversation_histories = {}
+MAX_HISTORY_MESSAGES = 10 # Keep last 5 turns (user + assistant)
 
 @app.route("/diane", methods=["POST"])
+@limiter.limit("5 per minute")
 def diane_chatbot():
     try:
-        data = request.get_json()
+        # Specific handling for JSON parsing errors
+        try:
+            data = request.get_json()
+            if not data:
+                raise BadRequest("No JSON data received.")
+        except BadRequest as e:
+            logging.warning(f"Bad Request: {e}")
+            return jsonify({"error": f"Requête invalide : {e}"}), 400
+
         user_message = data.get("message", "").strip()
+        #logging.info(f"Received message: '{user_message[:50]}...' ") # logging moved after getting IP
 
         if not user_message:
+            logging.warning("Received empty message.")
             return jsonify({"response": "Je n'ai pas compris votre question. Pouvez-vous préciser ?"}), 400
 
-        # Requête à l'API Mistral
-        url = "https://api.mistral.ai/v1/chat/completions"
+        if not MISTRAL_API_KEY:
+             logging.error("Mistral API key is not configured on the server.")
+             return jsonify({"error": "Configuration serveur incomplète."}), 500
+
+        # --- Conversation History Handling ---
+        user_ip = get_remote_address() # Use IP as identifier (simplification)
+        logging.info(f"Request from {user_ip}. Received message: '{user_message[:50]}...' ") # Log IP + message
+        user_history = conversation_histories.get(user_ip, [])
+        logging.debug(f"History for {user_ip}: {len(user_history)} messages")
+
+        # Construct messages for Mistral API
+        messages_payload = [
+            {"role": "system", "content": SYSTEM_PROMPT}
+        ]
+        messages_payload.extend(user_history) # Add past messages
+        messages_payload.append({"role": "user", "content": user_message}) # Add current message
+        # --- End History Handling ---
+
         headers = {
             "Authorization": f"Bearer {MISTRAL_API_KEY}",
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "mistral-medium",
-            "messages": [
-                {"role": "system", "content": (
-                    "Tu es Diane, une herboriste experte en plantes médicinales. "
-                    "Tes réponses doivent être **courtes (≤ 80 mots)**, bien structurées et faciles à comprendre. "
-                    "Utilise un ton chaleureux, pédagogique et bienveillant. "
-                    "Si la question est trop large, donne une réponse concise et invite à poser des précisions."
-                )},
-                {"role": "user", "content": user_message}
-            ]
+            "model": MISTRAL_MODEL,
+            "messages": messages_payload # Send history + current message
         }
 
-        mistral_response = requests.post(url, headers=headers, json=payload)
+        mistral_response = requests.post(MISTRAL_API_URL, headers=headers, json=payload)
 
         if mistral_response.status_code == 200:
             response_data = mistral_response.json()
-            bot_reply = response_data.get("choices", [{}])[0].get("message", {}).get("content", "Réponse introuvable")
+            # Extract the original assistant message content
+            bot_reply_content = response_data.get("choices", [{}])[0].get("message", {}).get("content", "Réponse introuvable")
 
-            return jsonify({"response": clean_response(bot_reply)})
+            # Clean the response for the user
+            cleaned_reply = clean_response(bot_reply_content, word_limit=80)
+
+            # --- Update History ---
+            # Add current user message and original assistant response to history
+            current_exchange = [
+                {"role": "user", "content": user_message},
+                {"role": "assistant", "content": bot_reply_content} # Store the *original* reply
+            ]
+            updated_history = user_history + current_exchange
+
+            # Trim history to max length
+            trimmed_history = updated_history[-MAX_HISTORY_MESSAGES:]
+
+            # Store updated history back into the global dictionary
+            conversation_histories[user_ip] = trimmed_history
+            logging.debug(f"Updated history for {user_ip}: {len(trimmed_history)} messages")
+            # --- End Update History ---
+
+            logging.info(f"Sending reply to {user_ip}: '{cleaned_reply[:50]}...' ")
+            return jsonify({"response": cleaned_reply}) # Send the cleaned reply
         else:
-            return jsonify({"error": "Erreur avec l'API Mistral."}), 500
+            # Log more details on Mistral API error
+            error_details = mistral_response.text
+            logging.error(f"Mistral API error for {user_ip}. Status: {mistral_response.status_code}, Details: {error_details}")
+            return jsonify({"error": "Erreur lors de la communication avec le service d'IA."}), 500
 
     except Exception as e:
-        return jsonify({"error": f"Erreur serveur : {str(e)}"}), 500
+        user_ip_for_error = get_remote_address() if 'user_ip' not in locals() else user_ip # Get IP if error happened early
+        logging.exception(f"An unexpected server error occurred for {user_ip_for_error}.")
+        return jsonify({"error": f"Erreur serveur inattendue."}), 500
 
 # Configuration pour Render : récupérer le port depuis les variables d'environnement
 if __name__ == "__main__":
