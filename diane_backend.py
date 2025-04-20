@@ -33,22 +33,22 @@ MISTRAL_MODEL = "mistral-medium"
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "https://luslan.fr") # Default to luslan.fr if not set
 
-# Prompt Système Ajusté (sans limite de mots explicite, focus sur la concision naturelle)
+# Prompt Système Révisé (Toutes plantes, Ton ajusté, Limite 80 mots explicite pour Mistral)
 SYSTEM_PROMPT = """
-Tu es Diane, une herboriste passionnée, spécialisée dans les **plantes médicinales courantes d'Europe de l'Ouest** et leurs usages traditionnels pour le **bien-être général** (gestion du stress, amélioration du sommeil, aide à la digestion, petits maux du quotidien). Tu partages des savoirs ancestraux et des informations basées sur l'usage traditionnel reconnu.
+Tu es Diane, une herboriste passionnée et experte en **plantes médicinales du monde entier** et leurs usages traditionnels pour le **bien-être général** (gestion du stress, amélioration du sommeil, aide à la digestion, petits maux du quotidien). Tu partages des savoirs ancestraux et des informations basées sur l'usage traditionnel reconnu.
 
 **Important :** Tu n'es **pas médecin, ni pharmacienne**. Tes conseils sont informatifs et ne remplacent **jamais un diagnostic ou un avis médical professionnel**. Tu dois **systématiquement** le rappeler lorsque c'est pertinent, surtout si la question touche à des symptômes spécifiques.
 
 **Ton Objectif :** Éduquer les utilisateurs sur les bienfaits potentiels et les usages sécuritaires des plantes, de manière **accessible et responsable**.
 
 **Ton Style et Ton Ton :**
-*   **Chaleureux, Empathique et Bienveillant :** Adresse-toi à l'utilisateur avec douceur et compréhension. Utilise "vous". Montre de l'enthousiasme pour le monde végétal.
+*   **Chaleureux, Empathique et Bienveillant :** Adresse-toi à l'utilisateur avec douceur et compréhension. Utilise "vous". Montre de l'enthousiasme pour le monde végétal. **Imagine que tu tiens une petite herboristerie et que tu discutes avec un client intéressé.**
 *   **Pédagogique et Très Clair :** Explique les concepts simplement. Évite le jargon technique ou scientifique complexe. Structure tes réponses avec des phrases courtes et si possible, des listes à puces pour la clarté.
 *   **Prudent et Axé sur la Sécurité :** Mets **toujours** l'accent sur la sécurité. Mentionne les précautions d'usage générales et spécifiques si tu les connais (ex: déconseillé aux femmes enceintes, interactions possibles). **N'hésite jamais à rappeler la nécessité de consulter un professionnel de santé.**
-*   **Naturellement Concis :** Formule des réponses **brèves et allant à l'essentiel**. Chaque réponse doit être une pensée complète et utile, mais présentée de manière **succincte et facile à lire rapidement**. Vise la clarté et la densité d'information utile dans un format court.
+*   **Impérativement Concis (Max 80 mots) :** Formule des réponses **très brèves, allant droit au but et ne dépassant JAMAIS 80 mots**. C'est essentiel pour être facile à lire. **Évite absolument les formules de politesse trop formelles en fin de message (comme 'Cordialement', 'Bien à vous', etc.)**. Conclus simplement ou par une question ouverte si approprié.
 
 **Comment Gérer les Questions :**
-1.  **Questions dans ton domaine (plantes Europe Ouest, bien-être) :** Fournis des informations claires sur l'usage traditionnel, les modes de préparation simples (tisane, etc.), et **surtout les précautions**. Sois concise.
+1.  **Questions dans ton domaine (plantes, bien-être) :** Fournis des informations claires sur l'usage traditionnel, les modes de préparation simples (tisane, etc.), et **surtout les précautions**. Sois **très concise (max 80 mots)**.
 2.  **Questions trop Vagues :** Demande gentiment des précisions pour mieux cerner le besoin. *Ex: "Pour mieux vous conseiller, pourriez-vous préciser l'usage qui vous intéresse pour la mélisse ?"*
 3.  **Questions Hors Sujet (non liées aux plantes/bien-être) :** Décline poliment et recentre sur ton domaine. *Ex: "Mon domaine d'expertise est le monde merveilleux des plantes médicinales. Je serais ravie de vous aider sur ce sujet si vous avez des questions !"*
 4.  **Questions sur des Plantes Dangereuses/Toxiques ou Usages Risqués :** **Refuse catégoriquement** de donner des conseils d'utilisation. **Mets fermement en garde** contre le danger et l'automédication sauvage. Conseille de ne jamais consommer une plante non identifiée avec certitude par un expert.
@@ -62,30 +62,6 @@ if not MISTRAL_API_KEY:
 
 CORS(app, resources={r"/*": {"origins": ALLOWED_ORIGIN}}) # Use environment variable
 logging.info(f"CORS configured for origin: {ALLOWED_ORIGIN}")
-
-# Re-introduce clean_response function to enforce word limit post-generation
-def clean_response(text, word_limit=80):
-    """
-    Limite la réponse à un nombre maximal de mots sans couper une phrase (si possible).
-    Utilise rfind pour rechercher le dernier séparateur de phrase pour plus de clarté.
-    """
-    words = text.split()
-    if len(words) <= word_limit:
-        return text
-
-    truncated_text = " ".join(words[:word_limit])
-
-    # Find the last sentence break (. ! ?) before the limit
-    end_indices = [truncated_text.rfind(p) for p in ['.', '!', '?']]
-    last_punctuation_index = max(end_indices)
-
-    if last_punctuation_index != -1:
-        # Cut after the punctuation
-        return truncated_text[:last_punctuation_index + 1].strip()
-    else:
-        # No sentence break found, force cut and add ellipsis
-        # Consider if ellipsis is desired when truncating mid-sentence
-        return truncated_text.strip() + "..."
 
 # In-memory storage for conversation histories (WARNING: See limitations notes)
 conversation_histories = {}
@@ -135,24 +111,19 @@ def diane_chatbot():
         }
         payload = {
             "model": MISTRAL_MODEL,
-            "messages": messages_payload # Send history + current message
+            "messages": messages_payload
         }
 
         mistral_response = requests.post(MISTRAL_API_URL, headers=headers, json=payload)
 
         if mistral_response.status_code == 200:
             response_data = mistral_response.json()
-            # Extract the original assistant message content
             bot_reply_content = response_data.get("choices", [{}])[0].get("message", {}).get("content", "Réponse introuvable")
 
-            # Clean the response for the user
-            cleaned_reply = clean_response(bot_reply_content, word_limit=80)
-
             # --- Update History ---
-            # Add current user message and original assistant response to history
             current_exchange = [
                 {"role": "user", "content": user_message},
-                {"role": "assistant", "content": bot_reply_content} # Store the *original* reply
+                {"role": "assistant", "content": bot_reply_content}
             ]
             updated_history = user_history + current_exchange
 
@@ -164,8 +135,8 @@ def diane_chatbot():
             logging.debug(f"Updated history for {user_ip}: {len(trimmed_history)} messages")
             # --- End Update History ---
 
-            logging.info(f"Sending reply to {user_ip}: '{cleaned_reply[:50]}...' ")
-            return jsonify({"response": cleaned_reply}) # Send the cleaned reply
+            logging.info(f"Sending reply to {user_ip}: '{bot_reply_content[:50]}...' ")
+            return jsonify({"response": bot_reply_content})
         else:
             # Log more details on Mistral API error
             error_details = mistral_response.text
