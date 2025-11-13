@@ -167,6 +167,20 @@ async def chat(request: Request, chat_request: ChatRequest):
         )
 
 
+@app.post("/diane", response_model=ChatResponse)
+@limiter.limit(f"{settings.RATE_LIMIT_PER_MINUTE}/minute")
+async def diane_endpoint(request: Request, chat_request: ChatRequest):
+    """
+    Legacy endpoint for backward compatibility with old WordPress widget.
+    Redirects to /chat endpoint logic.
+
+    This endpoint exists to support the old Flask backend endpoint name.
+    New integrations should use /chat instead.
+    """
+    logger.info("Legacy /diane endpoint called - redirecting to /chat logic")
+    return await chat(request, chat_request)
+
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     """
