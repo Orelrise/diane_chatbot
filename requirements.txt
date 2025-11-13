@@ -1,6 +1,8 @@
-flask
-requests
-gunicorn
-flask-cors
-python-dotenv
-Flask-Limiter
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+groq==0.4.2
+python-dotenv==1.0.0
+pydantic==2.5.0
+slowapi==0.1.9
+pytest==7.4.3
+httpx==0.25.2
