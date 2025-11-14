@@ -25,9 +25,9 @@ class GroqService:
         self.max_tokens = settings.MAX_TOKENS
         self.temperature = settings.TEMPERATURE
 
-        # Validate API key
+        # Warn if API key is not configured (but allow service to start)
         if not self.api_key:
-            raise ValueError("GROQ_API_KEY is not configured")
+            logger.warning("⚠️ GROQ_API_KEY is not configured. API calls will fail until key is added.")
 
     async def check_connection(self) -> bool:
         """
@@ -76,6 +76,11 @@ class GroqService:
         Raises:
             GroqServiceError: If API call fails
         """
+        # Check if API key is configured
+        if not self.api_key:
+            logger.error("Cannot call Groq API: GROQ_API_KEY is not configured")
+            raise GroqServiceError("GROQ_API_KEY is not configured. Please add it to environment variables.")
+
         try:
             headers = {
                 "Authorization": f"Bearer {self.api_key}",

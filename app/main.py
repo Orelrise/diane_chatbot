@@ -48,15 +48,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Validate settings on startup
-try:
-    settings.validate()
-    logger.info(f"{settings.APP_NAME} v{settings.APP_VERSION} starting...")
-    logger.info(f"Using Groq model: {settings.MODEL}")
-    logger.info(f"API Key configured: {settings.mask_api_key()}")
-except Exception as e:
-    logger.error(f"Configuration error: {str(e)}")
-    raise
+# Log startup information
+logger.info(f"{settings.APP_NAME} v{settings.APP_VERSION} starting...")
+logger.info(f"Using Groq model: {settings.MODEL}")
+logger.info(f"API Key configured: {settings.mask_api_key()}")
+
+# Warn if API key is missing (but allow startup)
+if not settings.GROQ_API_KEY:
+    logger.warning("⚠️ GROQ_API_KEY is not configured. API will start but /chat endpoint will fail until key is added.")
 
 
 @app.get("/", response_model=HealthResponse)
@@ -166,6 +165,20 @@ async def chat(request: Request, chat_request: ChatRequest):
                 "detail": str(e)
             }
         )
+
+
+@app.post("/diane", response_model=ChatResponse)
+@limiter.limit(f"{settings.RATE_LIMIT_PER_MINUTE}/minute")
+async def diane_endpoint(request: Request, chat_request: ChatRequest):
+    """
+    Legacy endpoint for backward compatibility with old WordPress widget.
+    Redirects to /chat endpoint logic.
+
+    This endpoint exists to support the old Flask backend endpoint name.
+    New integrations should use /chat instead.
+    """
+    logger.info("Legacy /diane endpoint called - redirecting to /chat logic")
+    return await chat(request, chat_request)
 
 
 @app.exception_handler(HTTPException)

@@ -263,9 +263,9 @@ git push -u origin main
      ```
    - **Instance Type** : Free (ou selon vos besoins)
 
-4. **Configurer les Variables d'Environnement**
+4. **Configurer les Variables d'Environnement** ⚠️ **IMPORTANT**
 
-   Dans la section "Environment" :
+   Dans la section "Environment", ajoutez ces variables :
 
    ```
    GROQ_API_KEY=your_groq_api_key_here
@@ -275,7 +275,12 @@ git push -u origin main
    RATE_LIMIT_PER_MINUTE=10
    ```
 
-   ⚠️ **Note** : Remplacez `your_groq_api_key_here` par votre vraie clé API Groq obtenue depuis [Groq Console](https://console.groq.com/).
+   **⚠️ Note Importante** :
+   - L'API **démarrera même sans `GROQ_API_KEY`** (pour permettre le déploiement)
+   - Les endpoints `/` et `/health` fonctionneront
+   - L'endpoint `/chat` retournera une erreur claire jusqu'à ce que la clé soit ajoutée
+   - Obtenez votre clé sur [Groq Console](https://console.groq.com/keys)
+   - Une fois la clé ajoutée, Render redéploiera automatiquement
 
 5. **Déployer**
 
